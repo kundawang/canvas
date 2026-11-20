@@ -255,4 +255,8 @@ const (
 	bFillStylePattern
 	bStrokeStylePattern
 	bGetImageData
+	bEnableHitRegions
+	bAddHitRegion
+	bRemoveHitRegion
+	bClearHitRegions
 )

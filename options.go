@@ -52,6 +52,19 @@ type Options struct {
 	// If ReconnectInterval is not set (i.e. 0) the canvas will not try
 	// to reconnect if the connection was lost.
 	ReconnectInterval time.Duration
+	// HitRegions enables server-side hit testing of named regions.
+	// When enabled, paths can be registered as hit regions via
+	// Context.AddHitRegion, and pointer events report the topmost
+	// region hit together with the point in the region's local
+	// coordinate system. When disabled (the default) the drawing and
+	// event protocols remain byte-identical to a context without hit
+	// regions, and the hit-region API methods return
+	// ErrHitRegionsDisabled.
+	HitRegions bool
+	// MaxHitRegions bounds the number of simultaneously registered hit
+	// regions. A value of 0 means the default limit (1000). It has no
+	// effect unless HitRegions is enabled.
+	MaxHitRegions int
 }
 
 func (o *Options) applyDefaults() {

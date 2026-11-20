@@ -245,6 +245,51 @@ func (d *demo) draw(ctx *canvas.Context) {
 Note that the `canvas.CloseEvent` does not have to be explicitly enabled.
 It is always enabled by default.
 
+### Hit regions
+
+When several draggable shapes overlap you need to know which shape the
+pointer actually hit. Hit regions give a path or shape a name and resolve
+pointer events against all named regions on the server, returning the
+topmost region together with the hit point in that region's local
+coordinate system. Hit testing is opt-in: set `Options.HitRegions`, then
+register the current path as a region with `AddHitRegion` (or one of the
+`AddFillHitRegion`, `AddStrokeHitRegion`, and `AddFillAndStrokeHitRegion`
+conveniences). Both fill and stroke hits are supported, and the current
+transformation and clipping stacks are captured per region.
+
+```go
+ctx.SetTransform(1, 0, 0, 1, x, y)
+ctx.BeginPath()
+ctx.Rect(0, 0, shapeWidth, shapeHeight)
+ctx.Fill()
+if err := ctx.AddFillHitRegion("shape"); err != nil {
+    // ErrHitRegionsDisabled, ErrTooManyHitRegions,
+    // ErrNonFiniteTransform, or ErrEmptyHitRegion
+    log.Println(err)
+}
+```
+
+Pointer events then carry an optional `Hit *HitInfo` field. It is `nil`
+when no region is hit, and otherwise contains the region name and the
+local `X`/`Y` coordinates. Every contact of a multi-touch event is
+resolved independently.
+
+```go
+case canvas.MouseDownEvent:
+    if e.Hit != nil && e.Hit.Region == "shape" {
+        dragOffsetX, dragOffsetY = e.Hit.X, e.Hit.Y
+    }
+```
+
+`RemoveHitRegion` and `ClearHitRegions` update the region index after a
+shape is redrawn or erased; re-adding an existing name replaces the
+region and moves it to the top. The number of regions is bounded by
+`Options.MaxHitRegions` (default 1000). Empty or zero-sized paths,
+non-finite or singular transformation matrices, and non-finite pointer
+coordinates are rejected or simply miss rather than producing wrong
+results. When `HitRegions` is left disabled the drawing and event
+protocols are unchanged.
+
 ## Alternatives
 
 * [github.com/tfriedel6/canvas](https://github.com/tfriedel6/canvas) -

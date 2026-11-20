@@ -68,6 +68,10 @@ document.addEventListener("DOMContentLoaded", function () {
         const ctx = canvas.getContext("2d");
         const webSocket = new WebSocket(config.drawUrl);
         let handlers = {};
+        // Hit regions are indexed server-side; this map only mirrors the
+        // name/ID index so the client stays in sync. A fresh map is created
+        // per connection, so a reconnect starts with an empty region set.
+        const hitRegions = {};
         webSocket.binaryType = "arraybuffer";
         webSocket.addEventListener("open", function () {
             handlers = addEventListeners(canvas, config.eventMask, webSocket);
@@ -89,7 +93,7 @@ document.addEventListener("DOMContentLoaded", function () {
             let offset = 0;
             const len = data.byteLength;
             while (offset < len) {
-                offset += draw(ctx, new DataView(data, offset));
+                offset += draw(ctx, new DataView(data, offset), hitRegions);
             }
         });
     }
@@ -272,7 +276,7 @@ document.addEventListener("DOMContentLoaded", function () {
         return modifiers;
     }
 
-    function draw(ctx, data) {
+    function draw(ctx, data, hitRegions) {
         switch (data.getUint8(0)) {
             case 1:
                 ctx.arc(
@@ -586,6 +590,38 @@ document.addEventListener("DOMContentLoaded", function () {
                     data.getFloat64(21), data.getFloat64(29));
                 return 37;
             }
+            case 69:
+                // One-time handshake signalling that the server-side
+                // hit-test engine is active. Hit resolution itself runs on
+                // the server; the client only mirrors the region index.
+                return 1;
+            case 70: {
+                // AddHitRegion: id, name string, hit mode.
+                const regionId = data.getUint32(1);
+                const name = getString(data, 5);
+                const modeOffset = 5 + name.byteLen;
+                hitRegions[regionId] = {
+                    name: name.value,
+                    mode: data.getUint8(modeOffset)
+                };
+                return modeOffset + 1;
+            }
+            case 71: {
+                // RemoveHitRegion: name string.
+                const name = getString(data, 1);
+                Object.keys(hitRegions).forEach(function (key) {
+                    if (hitRegions[key].name === name.value) {
+                        delete hitRegions[key];
+                    }
+                });
+                return 1 + name.byteLen;
+            }
+            case 72:
+                // ClearHitRegions.
+                Object.keys(hitRegions).forEach(function (key) {
+                    delete hitRegions[key];
+                });
+                return 1;
         }
         return 1;
     }

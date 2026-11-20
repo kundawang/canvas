@@ -137,10 +137,10 @@ func (h *drawHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
-	go readMessages(conn, events, &wg)
+	ctx := newContext(draws, events, h.opts)
+	go readMessages(conn, events, ctx, &wg)
 	go writeMessages(conn, draws, &wg)
 
-	ctx := newContext(draws, events, h.opts)
 	go func() {
 		defer wg.Done()
 		h.draw(ctx)
@@ -163,7 +163,7 @@ func writeMessages(conn *websocket.Conn, messages <-chan []byte, wg *sync.WaitGr
 	}
 }
 
-func readMessages(conn *websocket.Conn, events chan<- Event, wg *sync.WaitGroup) {
+func readMessages(conn *websocket.Conn, events chan<- Event, ctx *Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		messageType, p, err := conn.ReadMessage()
@@ -177,6 +177,6 @@ func readMessages(conn *websocket.Conn, events chan<- Event, wg *sync.WaitGroup)
 		if err != nil {
 			continue
 		}
-		events <- event
+		events <- enrichEventWithHit(event, ctx.hit)
 	}
 }

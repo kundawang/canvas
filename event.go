@@ -40,6 +40,11 @@ type MouseEvent struct {
 	Y int
 	// Mod describes the modifier keys pressed during the event.
 	Mod ModifierKeys
+	// Hit describes the topmost hit region under the pointer, if hit
+	// regions are enabled (see Options.HitRegions) and a region was hit.
+	// It is nil otherwise, including when hit regions are disabled, so the
+	// zero value of MouseEvent stays backward compatible.
+	Hit *HitInfo
 }
 
 func (e MouseEvent) mask() eventMask {
@@ -196,6 +201,11 @@ type Touch struct {
 	X int
 	// The Y coordinate of the touch point.
 	Y int
+	// Hit describes the topmost hit region under this touch point, if hit
+	// regions are enabled (see Options.HitRegions) and a region was hit.
+	// It is nil otherwise, so the zero value of Touch stays backward
+	// compatible. Each touch of a multi-touch event is resolved on its own.
+	Hit *HitInfo
 }
 
 // The TouchStartEvent is fired when one or more touch points are placed on
@@ -423,4 +433,71 @@ type errUnknownEventType struct {
 
 func (err errUnknownEventType) Error() string {
 	return fmt.Sprintf("unknown event type: %#x", err.unknownType)
+}
+
+// enrichEventWithHit resolves pointer coordinates of an event against the
+// hit-test engine and attaches the resulting HitInfo. Non-pointer events
+// are returned unchanged. Every touch of a multi-touch event is resolved
+// independently, so simultaneous touches can land on different regions.
+// A nil tester (hit regions disabled) leaves every event unchanged,
+// preserving the original event values.
+func enrichEventWithHit(event Event, hit *hitTester) Event {
+	if hit == nil {
+		return event
+	}
+	switch e := event.(type) {
+	case MouseMoveEvent:
+		e.MouseEvent = enrichMouse(e.MouseEvent, hit)
+		return e
+	case MouseDownEvent:
+		e.MouseEvent = enrichMouse(e.MouseEvent, hit)
+		return e
+	case MouseUpEvent:
+		e.MouseEvent = enrichMouse(e.MouseEvent, hit)
+		return e
+	case ClickEvent:
+		e.MouseEvent = enrichMouse(e.MouseEvent, hit)
+		return e
+	case DblClickEvent:
+		e.MouseEvent = enrichMouse(e.MouseEvent, hit)
+		return e
+	case AuxClickEvent:
+		e.MouseEvent = enrichMouse(e.MouseEvent, hit)
+		return e
+	case WheelEvent:
+		e.MouseEvent = enrichMouse(e.MouseEvent, hit)
+		return e
+	case TouchStartEvent:
+		e.TouchEvent = enrichTouch(e.TouchEvent, hit)
+		return e
+	case TouchMoveEvent:
+		e.TouchEvent = enrichTouch(e.TouchEvent, hit)
+		return e
+	case TouchEndEvent:
+		e.TouchEvent = enrichTouch(e.TouchEvent, hit)
+		return e
+	case TouchCancelEvent:
+		e.TouchEvent = enrichTouch(e.TouchEvent, hit)
+		return e
+	}
+	return event
+}
+
+func enrichMouse(m MouseEvent, hit *hitTester) MouseEvent {
+	m.Hit = hit.hitAt(float64(m.X), float64(m.Y))
+	return m
+}
+
+func enrichTouch(t TouchEvent, hit *hitTester) TouchEvent {
+	t.Touches = enrichTouchList(t.Touches, hit)
+	t.ChangedTouches = enrichTouchList(t.ChangedTouches, hit)
+	t.TargetTouches = enrichTouchList(t.TargetTouches, hit)
+	return t
+}
+
+func enrichTouchList(list TouchList, hit *hitTester) TouchList {
+	for i := range list {
+		list[i].Hit = hit.hitAt(float64(list[i].X), float64(list[i].Y))
+	}
+	return list
 }

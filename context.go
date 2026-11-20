@@ -31,14 +31,33 @@ type Context struct {
 	imageDataIDs idGenerator
 	gradientIDs  idGenerator
 	patternIDs   idGenerator
+
+	// hit is non-nil only when hit regions are enabled via Options.
+	// All hit-region state is kept server-side; the client merely mirrors
+	// the region index for cursor support and future extensions.
+	hit *hitTester
+
+	// hitEnabledSent records whether the bEnableHitRegions handshake
+	// message was already buffered, so it is sent exactly once.
+	hitEnabledSent bool
 }
 
 func newContext(draws chan<- []byte, events <-chan Event, opts *Options) *Context {
-	return &Context{
+	ctx := &Context{
 		opts:   opts,
 		draws:  draws,
 		events: events,
 	}
+	if opts != nil && opts.HitRegions {
+		ctx.hit = newHitTester(opts.MaxHitRegions)
+	}
+	return ctx
+}
+
+// HitRegionsEnabled reports whether server-side hit testing is active for
+// this context, as configured by Options.HitRegions.
+func (ctx *Context) HitRegionsEnabled() bool {
+	return ctx.hit != nil
 }
 
 // Events returns a channel of events sent by the client.
@@ -173,6 +192,9 @@ func (ctx *Context) SetLineJoin(join LineJoin) {
 func (ctx *Context) SetLineWidth(width float64) {
 	ctx.buf.addByte(bLineWidth)
 	ctx.buf.addFloat64(width)
+	if ctx.hit != nil {
+		ctx.hit.setLineWidth(width)
+	}
 }
 
 // SetMiterLimit sets the miter limit ratio.
@@ -331,6 +353,9 @@ func (ctx *Context) Arc(x, y, radius, startAngle, endAngle float64, anticlockwis
 	ctx.buf.addFloat64(startAngle)
 	ctx.buf.addFloat64(endAngle)
 	ctx.buf.addBool(anticlockwise)
+	if ctx.hit != nil {
+		ctx.hit.arc(x, y, radius, startAngle, endAngle, anticlockwise)
+	}
 }
 
 // ArcTo adds a circular arc to the current sub-path, using the given control
@@ -353,6 +378,9 @@ func (ctx *Context) ArcTo(x1, y1, x2, y2, radius float64) {
 	ctx.buf.addFloat64(x2)
 	ctx.buf.addFloat64(y2)
 	ctx.buf.addFloat64(radius)
+	if ctx.hit != nil {
+		ctx.hit.arcTo(x1, y1, x2, y2, radius)
+	}
 }
 
 // BeginPath starts a new path by emptying the list of sub-paths. Call this
@@ -362,6 +390,9 @@ func (ctx *Context) ArcTo(x1, y1, x2, y2, radius float64) {
 // you can use MoveTo.
 func (ctx *Context) BeginPath() {
 	ctx.buf.addByte(bBeginPath)
+	if ctx.hit != nil {
+		ctx.hit.beginPath()
+	}
 }
 
 // BezierCurveTo adds a cubic Bézier curve to the current sub-path. It requires
@@ -380,6 +411,9 @@ func (ctx *Context) BezierCurveTo(cp1x, cp1y, cp2x, cp2y, x, y float64) {
 	ctx.buf.addFloat64(cp2y)
 	ctx.buf.addFloat64(x)
 	ctx.buf.addFloat64(y)
+	if ctx.hit != nil {
+		ctx.hit.bezierTo(cp1x, cp1y, cp2x, cp2y, x, y)
+	}
 }
 
 // ClearRect erases the pixels in a rectangular area by setting them to
@@ -410,6 +444,9 @@ func (ctx *Context) ClearRect(x, y, width, height float64) {
 // rectangular shape to the path before calling Clip.
 func (ctx *Context) Clip() {
 	ctx.buf.addByte(bClip)
+	if ctx.hit != nil {
+		ctx.hit.clip()
+	}
 }
 
 // ClosePath attempts to add a straight line from the current point to the
@@ -420,6 +457,9 @@ func (ctx *Context) Clip() {
 // path using the Stroke or Fill methods.
 func (ctx *Context) ClosePath() {
 	ctx.buf.addByte(bClosePath)
+	if ctx.hit != nil {
+		ctx.hit.closePath()
+	}
 }
 
 // Ellipse adds an elliptical arc to the current sub-path.
@@ -440,6 +480,9 @@ func (ctx *Context) Ellipse(x, y, radiusX, radiusY, rotation, startAngle, endAng
 	ctx.buf.addFloat64(startAngle)
 	ctx.buf.addFloat64(endAngle)
 	ctx.buf.addBool(anticlockwise)
+	if ctx.hit != nil {
+		ctx.hit.ellipse(x, y, radiusX, radiusY, rotation, startAngle, endAngle, anticlockwise)
+	}
 }
 
 // Fill fills the current path with the current fill style (see SetFillStyle,
@@ -515,6 +558,9 @@ func (ctx *Context) LineTo(x, y float64) {
 	ctx.buf.addByte(bLineTo)
 	ctx.buf.addFloat64(x)
 	ctx.buf.addFloat64(y)
+	if ctx.hit != nil {
+		ctx.hit.lineTo(x, y)
+	}
 }
 
 // MoveTo begins a new sub-path at the point specified by the given (x, y)
@@ -523,6 +569,9 @@ func (ctx *Context) MoveTo(x, y float64) {
 	ctx.buf.addByte(bMoveTo)
 	ctx.buf.addFloat64(x)
 	ctx.buf.addFloat64(y)
+	if ctx.hit != nil {
+		ctx.hit.moveTo(x, y)
+	}
 }
 
 // QuadraticCurveTo adds a quadratic Bézier curve to the current sub-path.
@@ -539,6 +588,9 @@ func (ctx *Context) QuadraticCurveTo(cpx, cpy, x, y float64) {
 	ctx.buf.addFloat64(cpy)
 	ctx.buf.addFloat64(x)
 	ctx.buf.addFloat64(y)
+	if ctx.hit != nil {
+		ctx.hit.quadraticTo(cpx, cpy, x, y)
+	}
 }
 
 // Rect adds a rectangle to the current path.
@@ -557,6 +609,9 @@ func (ctx *Context) Rect(x, y, width, height float64) {
 	ctx.buf.addFloat64(y)
 	ctx.buf.addFloat64(width)
 	ctx.buf.addFloat64(height)
+	if ctx.hit != nil {
+		ctx.hit.rect(x, y, width, height)
+	}
 }
 
 // Restore restores the most recently saved canvas state by popping the top
@@ -566,6 +621,9 @@ func (ctx *Context) Rect(x, y, width, height float64) {
 // For more information about the drawing state, see Save.
 func (ctx *Context) Restore() {
 	ctx.buf.addByte(bRestore)
+	if ctx.hit != nil {
+		ctx.hit.restore()
+	}
 }
 
 // Rotate adds a rotation to the transformation matrix.
@@ -578,6 +636,9 @@ func (ctx *Context) Restore() {
 func (ctx *Context) Rotate(angle float64) {
 	ctx.buf.addByte(bRotate)
 	ctx.buf.addFloat64(angle)
+	if ctx.hit != nil {
+		ctx.hit.rotate(angle)
+	}
 }
 
 // Save saves the entire state of the canvas by pushing the current state onto
@@ -595,6 +656,9 @@ func (ctx *Context) Rotate(angle float64) {
 //     SetImageSmoothingEnabled.
 func (ctx *Context) Save() {
 	ctx.buf.addByte(bSave)
+	if ctx.hit != nil {
+		ctx.hit.save()
+	}
 }
 
 // Scale adds a scaling transformation to the canvas units horizontally
@@ -618,6 +682,9 @@ func (ctx *Context) Scale(x, y float64) {
 	ctx.buf.addByte(bScale)
 	ctx.buf.addFloat64(x)
 	ctx.buf.addFloat64(y)
+	if ctx.hit != nil {
+		ctx.hit.scale(x, y)
+	}
 }
 
 // Stroke outlines the current or given path with the current stroke style.
@@ -705,6 +772,9 @@ func (ctx *Context) Translate(x, y float64) {
 	ctx.buf.addByte(bTranslate)
 	ctx.buf.addFloat64(x)
 	ctx.buf.addFloat64(y)
+	if ctx.hit != nil {
+		ctx.hit.translate(x, y)
+	}
 }
 
 // Transform multiplies the current transformation with the matrix described
@@ -732,6 +802,9 @@ func (ctx *Context) Transform(a, b, c, d, e, f float64) {
 	ctx.buf.addFloat64(d)
 	ctx.buf.addFloat64(e)
 	ctx.buf.addFloat64(f)
+	if ctx.hit != nil {
+		ctx.hit.transform(a, b, c, d, e, f)
+	}
 }
 
 // SetTransform resets (overrides) the current transformation to the identity
@@ -760,6 +833,9 @@ func (ctx *Context) SetTransform(a, b, c, d, e, f float64) {
 	ctx.buf.addFloat64(d)
 	ctx.buf.addFloat64(e)
 	ctx.buf.addFloat64(f)
+	if ctx.hit != nil {
+		ctx.hit.setTransform(a, b, c, d, e, f)
+	}
 }
 
 // SetLineDash sets the line dash pattern used when stroking lines. It uses a
@@ -983,8 +1059,108 @@ func (ctx *Context) GetImageData(sx, sy, sw, sh float64) *ImageData {
 // Nothing is displayed on the client canvas until Flush is called.
 // An animation loop usually has one flush per animation frame.
 func (ctx *Context) Flush() {
+	if ctx.hit != nil && !ctx.hitEnabledSent {
+		// Prepend the one-time handshake that switches the client into
+		// hit-region-aware mode.
+		ctx.buf.bytes = append([]byte{bEnableHitRegions}, ctx.buf.bytes...)
+		ctx.hitEnabledSent = true
+	}
 	ctx.draws <- ctx.buf.bytes
 	ctx.buf.reset()
+}
+
+// AddHitRegion registers the current path as a named hit region using the
+// given hit mode. The region captures the current transformation matrix,
+// clipping region, and line width. Pointer events are then resolved against
+// all registered regions, and the topmost region hit carries a HitInfo on
+// the event.
+//
+// Re-adding an existing name replaces the previous region of that name and
+// moves it to the top of the stacking order.
+//
+// It returns ErrHitRegionsDisabled if Options.HitRegions was not set,
+// ErrTooManyHitRegions if the region limit is reached,
+// ErrNonFiniteTransform if the current matrix is non-finite or singular,
+// and ErrEmptyHitRegion if the current path is empty or zero-sized.
+//
+// AddHitRegion does not paint anything; pair it with Fill and/or Stroke.
+func (ctx *Context) AddHitRegion(name string, mode HitMode) error {
+	if ctx.hit == nil {
+		return ErrHitRegionsDisabled
+	}
+	id, err := ctx.hit.add(name, mode)
+	if err != nil {
+		return err
+	}
+	ctx.buf.addByte(bAddHitRegion)
+	ctx.buf.addUint32(id)
+	ctx.buf.addString(name)
+	ctx.buf.addByte(byte(mode))
+	return nil
+}
+
+// AddFillHitRegion is a convenience wrapper around AddHitRegion with
+// HitFill mode.
+func (ctx *Context) AddFillHitRegion(name string) error {
+	return ctx.AddHitRegion(name, HitFill)
+}
+
+// AddStrokeHitRegion is a convenience wrapper around AddHitRegion with
+// HitStroke mode.
+func (ctx *Context) AddStrokeHitRegion(name string) error {
+	return ctx.AddHitRegion(name, HitStroke)
+}
+
+// AddFillAndStrokeHitRegion is a convenience wrapper around AddHitRegion
+// with HitFillAndStroke mode.
+func (ctx *Context) AddFillAndStrokeHitRegion(name string) error {
+	return ctx.AddHitRegion(name, HitFillAndStroke)
+}
+
+// RemoveHitRegion removes the named hit region. It returns false if no
+// region with that name exists. Removing a region updates the stacking
+// order, so subsequent hit tests skip it and regions above it move down.
+func (ctx *Context) RemoveHitRegion(name string) (bool, error) {
+	if ctx.hit == nil {
+		return false, ErrHitRegionsDisabled
+	}
+	removed := ctx.hit.remove(name)
+	if removed {
+		ctx.buf.addByte(bRemoveHitRegion)
+		ctx.buf.addString(name)
+	}
+	return removed, nil
+}
+
+// ClearHitRegions removes all hit regions. It is safe to call when no
+// regions are registered.
+func (ctx *Context) ClearHitRegions() error {
+	if ctx.hit == nil {
+		return ErrHitRegionsDisabled
+	}
+	ctx.hit.clear()
+	ctx.buf.addByte(bClearHitRegions)
+	return nil
+}
+
+// HitRegionCount returns the number of currently registered hit regions,
+// or 0 when hit regions are disabled.
+func (ctx *Context) HitRegionCount() int {
+	if ctx.hit == nil {
+		return 0
+	}
+	return ctx.hit.RegionCount()
+}
+
+// HitTest resolves the topmost hit region for a canvas-space point and
+// returns the hit information. It returns nil if no region is hit or hit
+// regions are disabled. This is the same resolution applied automatically
+// to pointer events.
+func (ctx *Context) HitTest(x, y float64) *HitInfo {
+	if ctx.hit == nil || !finitePoint(x, y) {
+		return nil
+	}
+	return ctx.hit.hitAt(x, y)
 }
 
 type idGenerator struct {
